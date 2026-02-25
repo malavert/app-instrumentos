@@ -55,17 +55,22 @@ IMAGES_DIR = BASE_DIR / "instrument_photos"
 IMAGES_DIR.mkdir(exist_ok=True)
 
 # ==============================
-# Encabezado con logo (arriba derecha)
+# Encabezado con 2 logos
 # ==============================
-LOGO_PATH = BASE_DIR / "Logo_CI.png"
+LOGO_LEFT  = BASE_DIR / "logo_fauba.jpg"
+LOGO_RIGHT = BASE_DIR / "Logo_CI.jpg"
 
-col_title, col_logo = st.columns([6, 1])
+col_left, col_center, col_right = st.columns([2.2, 6, 2.2])
 
-with col_title:
+with col_left:
+    if LOGO_LEFT.exists():
+        st.image(str(LOGO_LEFT), use_container_width=True)
+
+with col_center:
     st.title("Inventario de Instrumentos - Cultivos Industriales - FAUBA")
     st.markdown(
         """
-        <p style='font-size:22px;'>
+        <p style='font-size:22px; margin-top:-8px; text-align:center;'>
         Sistema para registrar y consultar instrumentos, con información básica,
         responsable y reservas de uso.
         </p>
@@ -73,12 +78,9 @@ with col_title:
         unsafe_allow_html=True
     )
 
-with col_logo:
-    if LOGO_PATH.exists():
-        st.image(LOGO_PATH, width=200)
-
-#st.caption(f"Base de datos: {DB_PATH}")
-#st.caption(f"Carpeta de fotos: {IMAGES_DIR}")
+with col_right:
+    if LOGO_RIGHT.exists():
+        st.image(str(LOGO_RIGHT), use_container_width=True)
 
 # ==============================
 # Compatibilidad rerun
@@ -781,3 +783,4 @@ with tab3:
                             borrar_reserva(int(reserva_id_sel))
                             st.success("Reserva eliminada.")
                             do_rerun()
+
