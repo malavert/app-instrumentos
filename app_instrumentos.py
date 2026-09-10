@@ -216,12 +216,6 @@ def borrar_reserva(reserva_id):
 
 
 # ==============================
-# Mensajes de confirmación después de recargar
-# ==============================
-if "mensaje_exito" in st.session_state:
-    st.success(st.session_state.pop("mensaje_exito"))
-
-# ==============================
 # UI: pestañas
 # ==============================
 tab1, tab2, tab3 = st.tabs(
@@ -270,14 +264,21 @@ with tab1:
                     descripcion=descripcion,
                     foto_url=foto_url,
                 )
-                st.session_state["mensaje_exito"] = "Instrumento guardado correctamente."
+                st.session_state["mensaje_instrumento_guardado"] = "Instrumento guardado correctamente."
                 do_rerun()
+
+    # Mostrar el mensaje debajo del formulario, después del rerun
+    if "mensaje_instrumento_guardado" in st.session_state:
+        st.success(st.session_state.pop("mensaje_instrumento_guardado"))
 
 # ------------------------------
 # TAB 2: Ver / Editar / Borrar instrumentos
 # ------------------------------
 with tab2:
     st.subheader("Base de datos de instrumentos")
+
+    if "mensaje_exito" in st.session_state:
+        st.success(st.session_state.pop("mensaje_exito"))
 
     colf1, colf2, colf3 = st.columns(3)
     with colf1:
@@ -422,6 +423,9 @@ with tab2:
 # ------------------------------
 with tab3:
     st.subheader("Reservas de uso de instrumentos")
+
+    if "mensaje_exito" in st.session_state:
+        st.success(st.session_state.pop("mensaje_exito"))
 
     df_all_inst = cargar_instrumentos()
     if df_all_inst.empty:
@@ -573,4 +577,4 @@ with tab3:
                         else:
                             borrar_reserva(int(reserva_id_sel))
                             st.session_state["mensaje_exito"] = "Reserva eliminada correctamente."
-                            do_rerun()
+                        
