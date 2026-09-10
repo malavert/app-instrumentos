@@ -39,7 +39,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LOGO_LEFT = BASE_DIR / "logo_fauba.jpg"
 LOGO_RIGHT = BASE_DIR / "Logo_CI.jpg"
-col_left, col_center, col_right = st.columns([3.0, 6, 2.2])
+col_left, col_center, col_right = st.columns([3.0, 6, 2.0])
 with col_left:
     if LOGO_LEFT.exists(): st.image(str(LOGO_LEFT), width="stretch")
 with col_center:
