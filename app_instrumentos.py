@@ -88,10 +88,30 @@ def guardar_imagen(uploaded_file) -> Optional[str]:
 
 def obtener_url_foto(foto_path: Optional[str]) -> Optional[str]:
     """
-    Genera una URL firmada temporal para visualizar una foto del bucket privado.
+    Genera una URL firmada temporal para visualizar una foto
+    guardada en el bucket privado de Supabase.
     """
+
+    # Sin foto / None / NaN de pandas
+    if foto_path is None:
+        return None
+
+    try:
+        if pd.isna(foto_path):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    # Supabase necesita que path sea str
+    foto_path = str(foto_path).strip()
+
     if not foto_path:
         return None
+
+    # Compatibilidad con registros antiguos que tenían guardada
+    # una URL completa en vez del nombre/ruta del archivo
+    if foto_path.startswith("http://") or foto_path.startswith("https://"):
+        return foto_path
 
     response = supabase.storage.from_(SUPABASE_BUCKET).create_signed_url(
         foto_path,
