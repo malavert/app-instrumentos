@@ -4,428 +4,165 @@ Created on Tue Dec 30 12:18:15 2025
 
 @author: Malavert
 """
-import os
-import re
-import sqlite3
+"""
+Inventario de Instrumentos - Cultivos Industriales - FAUBA
+Backend persistente: Supabase PostgreSQL + Supabase Storage.
+"""
 from datetime import datetime, date, time
 from pathlib import Path
 from typing import Optional, Dict, Any
-
+from urllib.parse import urlparse, unquote
+import uuid
 import streamlit as st
 import pandas as pd
+from supabase import create_client, Client
 
-# ==============================
-# Configuración general
-# ==============================
-st.set_page_config(
-    page_title="Inventario de Instrumentos",
-    page_icon="🧪",
-    layout="wide",
-)
-
+st.set_page_config(page_title="Inventario de Instrumentos", page_icon="🧪", layout="wide")
 st.markdown("""
 <style>
+button[data-baseweb="tab"] p {font-size:24px!important;font-weight:600!important;}
+button[data-baseweb="tab"][aria-selected="true"] p {font-size:24px!important;color:#ff4b4b!important;}
+button[data-baseweb="tab"] {padding:16px 24px!important;}
+</style>""", unsafe_allow_html=True)
 
-/* TEXTO DE LOS TABS */
-button[data-baseweb="tab"] p {
-    font-size: 24px !important;
-    font-weight: 600 !important;
-}
-
-/* TAB ACTIVO */
-button[data-baseweb="tab"][aria-selected="true"] p {
-    font-size: 24px !important;
-    color: #ff4b4b !important;
-}
-
-/* ESPACIADO */
-button[data-baseweb="tab"] {
-    padding: 16px 24px !important;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# Carpeta base
 BASE_DIR = Path(__file__).resolve().parent
 
-# Base de datos y fotos
-DB_PATH = BASE_DIR / "instrumentos.db"
-IMAGES_DIR = BASE_DIR / "instrument_photos"
-IMAGES_DIR.mkdir(exist_ok=True)
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    SUPABASE_BUCKET = st.secrets.get("SUPABASE_BUCKET", "instrumentos-fotos")
+except Exception:
+    st.error("Faltan las credenciales de Supabase en Secrets de Streamlit.")
+    st.stop()
 
-# ==============================
-# Encabezado con 2 logos
-# ==============================
-LOGO_LEFT  = BASE_DIR / "logo_fauba.jpg"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+LOGO_LEFT = BASE_DIR / "logo_fauba.jpg"
 LOGO_RIGHT = BASE_DIR / "Logo_CI.jpg"
-
 col_left, col_center, col_right = st.columns([2.2, 6, 2.2])
-
 with col_left:
-    if LOGO_LEFT.exists():
-        st.image(str(LOGO_LEFT), use_container_width=True)
-
+    if LOGO_LEFT.exists(): st.image(str(LOGO_LEFT), use_container_width=True)
 with col_center:
     st.title("Inventario de Instrumentos - Cultivos Industriales - FAUBA")
-    st.markdown(
-        """
-        <p style='font-size:22px; margin-top:-8px; text-align:center;'>
-        Sistema para registrar y consultar instrumentos, con información básica,
-        responsable y reservas de uso.
-        </p>
-        """,
-        unsafe_allow_html=True
-    )
-
+    st.markdown("""<p style='font-size:22px;margin-top:-8px;text-align:center;'>
+    Sistema para registrar y consultar instrumentos, con información básica,
+    responsable y reservas de uso.</p>""", unsafe_allow_html=True)
 with col_right:
-    if LOGO_RIGHT.exists():
-        st.image(str(LOGO_RIGHT), use_container_width=True)
+    if LOGO_RIGHT.exists(): st.image(str(LOGO_RIGHT), use_container_width=True)
 
-# ==============================
-# Compatibilidad rerun
-# ==============================
 def do_rerun():
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:
-        st.experimental_rerun()
+    st.rerun() if hasattr(st, "rerun") else st.experimental_rerun()
 
-# ==============================
-# Funciones de base de datos
-# ==============================
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS instrumentos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            grupo_unidad TEXT,
-            responsable TEXT,
-            investigador_grupo TEXT NOT NULL,
-            instrumento TEXT NOT NULL,
-            numero_inventario TEXT,
-            reserva_uso TEXT,
-            estado TEXT,
-            ubicacion TEXT,
-            descripcion TEXT,
-            foto_path TEXT,
-            fecha_registro TEXT
-        )
-        """
-    )
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS reservas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            instrumento_id INTEGER NOT NULL,
-            usuario TEXT NOT NULL,
-            fecha_inicio TEXT NOT NULL,
-            fecha_fin TEXT NOT NULL,
-            comentario TEXT,
-            estado TEXT,
-            fecha_registro TEXT,
-            FOREIGN KEY(instrumento_id) REFERENCES instrumentos(id)
-        )
-        """
-    )
-
-    conn.commit()
-    conn.close()
-
+def parse_datetime(value):
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
 def guardar_imagen(uploaded_file) -> Optional[str]:
-    if uploaded_file is None:
-        return None
+    if uploaded_file is None: return None
     suffix = Path(uploaded_file.name).suffix.lower()
-    if suffix not in [".png", ".jpg", ".jpeg", ".tif", ".tiff"]:
-        suffix = ".png"
-    file_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{suffix}"
-    file_path = IMAGES_DIR / file_name
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    return str(file_path)
+    if suffix not in [".png", ".jpg", ".jpeg"]: suffix = ".png"
+    nombre = f"{uuid.uuid4().hex}{suffix}"
+    supabase.storage.from_(SUPABASE_BUCKET).upload(
+        path=nombre, file=uploaded_file.getvalue(),
+        file_options={"content-type": getattr(uploaded_file, "type", None) or "application/octet-stream",
+                      "upsert": "false"})
+    r = supabase.storage.from_(SUPABASE_BUCKET).create_signed_url(nombre, 315360000)
+    return r.get("signedURL") or r.get("signedUrl")
 
+def _storage_path_from_url(url):
+    if not url: return None
+    try:
+        p = unquote(urlparse(url).path)
+        marker = f"/{SUPABASE_BUCKET}/"
+        return p.split(marker, 1)[1] if marker in p else None
+    except Exception:
+        return None
 
-# ---------- Instrumentos ----------
-def insertar_instrumento(
-    grupo_unidad: str,
-    responsable: str,
-    investigador_grupo: str,
-    instrumento: str,
-    numero_inventario: str,
-    reserva_uso: str,
-    estado: str,
-    ubicacion: str,
-    descripcion: str,
-    foto_path: Optional[str],
-):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO instrumentos
-        (grupo_unidad, responsable, investigador_grupo, instrumento,
-         numero_inventario, reserva_uso, estado, ubicacion,
-         descripcion, foto_path, fecha_registro)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            grupo_unidad,
-            responsable,
-            investigador_grupo,
-            instrumento,
-            numero_inventario,
-            reserva_uso,
-            estado,
-            ubicacion,
-            descripcion,
-            foto_path,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ),
-    )
-    conn.commit()
-    conn.close()
+def borrar_imagen_por_url(url):
+    p = _storage_path_from_url(url)
+    if p:
+        try: supabase.storage.from_(SUPABASE_BUCKET).remove([p])
+        except Exception: pass
 
+def insertar_instrumento(grupo_unidad, responsable, investigador_grupo, instrumento,
+                         numero_inventario, reserva_uso, estado, ubicacion, descripcion, foto_url):
+    supabase.table("instrumentos").insert({
+        "grupo_unidad":grupo_unidad, "responsable":responsable,
+        "investigador_grupo":investigador_grupo, "instrumento":instrumento,
+        "numero_inventario":numero_inventario, "reserva_uso":reserva_uso,
+        "estado":estado, "ubicacion":ubicacion, "descripcion":descripcion,
+        "foto_url":foto_url}).execute()
 
-def cargar_instrumentos(
-    filtro_grupo: str = "",
-    filtro_investigador: str = "",
-    filtro_instrumento: str = "",
-) -> pd.DataFrame:
-    conn = sqlite3.connect(DB_PATH)
-    query = "SELECT * FROM instrumentos WHERE 1=1"
-    params: list[str] = []
+def cargar_instrumentos(filtro_grupo="", filtro_investigador="", filtro_instrumento=""):
+    q = supabase.table("instrumentos").select("*").order("id")
+    if filtro_grupo: q = q.ilike("grupo_unidad", f"%{filtro_grupo}%")
+    if filtro_investigador: q = q.ilike("investigador_grupo", f"%{filtro_investigador}%")
+    if filtro_instrumento: q = q.ilike("instrumento", f"%{filtro_instrumento}%")
+    return pd.DataFrame(q.execute().data or [])
 
-    if filtro_grupo:
-        query += " AND grupo_unidad LIKE ?"
-        params.append(f"%{filtro_grupo}%")
-    if filtro_investigador:
-        query += " AND investigador_grupo LIKE ?"
-        params.append(f"%{filtro_investigador}%")
-    if filtro_instrumento:
-        query += " AND instrumento LIKE ?"
-        params.append(f"%{filtro_instrumento}%")
+def obtener_instrumento_por_id(instrumento_id):
+    r = supabase.table("instrumentos").select("*").eq("id", instrumento_id).limit(1).execute()
+    return r.data[0] if r.data else None
 
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
+def actualizar_instrumento(instrumento_id, grupo_unidad, responsable, investigador_grupo,
+                           instrumento, numero_inventario, reserva_uso, estado, ubicacion,
+                           descripcion, foto_url):
+    supabase.table("instrumentos").update({
+        "grupo_unidad":grupo_unidad, "responsable":responsable,
+        "investigador_grupo":investigador_grupo, "instrumento":instrumento,
+        "numero_inventario":numero_inventario, "reserva_uso":reserva_uso,
+        "estado":estado, "ubicacion":ubicacion, "descripcion":descripcion,
+        "foto_url":foto_url}).eq("id", instrumento_id).execute()
 
+def contar_reservas_de_instrumento(instrumento_id):
+    r = supabase.table("reservas").select("id").eq("instrumento_id", instrumento_id).execute()
+    return len(r.data or [])
 
-def obtener_instrumento_por_id(instrumento_id: int) -> Optional[Dict[str, Any]]:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM instrumentos WHERE id = ?", (instrumento_id,))
-    row = cur.fetchone()
-    conn.close()
-    return dict(row) if row else None
+def borrar_reservas_de_instrumento(instrumento_id):
+    supabase.table("reservas").delete().eq("instrumento_id", instrumento_id).execute()
 
-
-def actualizar_instrumento(
-    instrumento_id: int,
-    grupo_unidad: str,
-    responsable: str,
-    investigador_grupo: str,
-    instrumento: str,
-    numero_inventario: str,
-    reserva_uso: str,
-    estado: str,
-    ubicacion: str,
-    descripcion: str,
-    foto_path: Optional[str],
-):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        UPDATE instrumentos
-        SET grupo_unidad = ?,
-            responsable = ?,
-            investigador_grupo = ?,
-            instrumento = ?,
-            numero_inventario = ?,
-            reserva_uso = ?,
-            estado = ?,
-            ubicacion = ?,
-            descripcion = ?,
-            foto_path = ?
-        WHERE id = ?
-        """,
-        (
-            grupo_unidad,
-            responsable,
-            investigador_grupo,
-            instrumento,
-            numero_inventario,
-            reserva_uso,
-            estado,
-            ubicacion,
-            descripcion,
-            foto_path,
-            instrumento_id,
-        ),
-    )
-    conn.commit()
-    conn.close()
-
-
-def contar_reservas_de_instrumento(instrumento_id: int) -> int:
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM reservas WHERE instrumento_id = ?", (instrumento_id,))
-    n = cur.fetchone()[0]
-    conn.close()
-    return int(n)
-
-
-def borrar_reservas_de_instrumento(instrumento_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM reservas WHERE instrumento_id = ?", (instrumento_id,))
-    conn.commit()
-    conn.close()
-
-
-def borrar_instrumento(instrumento_id: int):
+def borrar_instrumento(instrumento_id):
     inst = obtener_instrumento_por_id(instrumento_id)
-    foto_path = inst.get("foto_path") if inst else None
+    foto = inst.get("foto_url") if inst else None
+    supabase.table("instrumentos").delete().eq("id", instrumento_id).execute()
+    borrar_imagen_por_url(foto)
 
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM instrumentos WHERE id = ?", (instrumento_id,))
-    conn.commit()
-    conn.close()
+def insertar_reserva(instrumento_id, usuario, fecha_inicio, fecha_fin, comentario,
+                     estado="Confirmada"):
+    supabase.table("reservas").insert({
+        "instrumento_id":instrumento_id, "usuario":usuario,
+        "fecha_inicio":fecha_inicio.isoformat(), "fecha_fin":fecha_fin.isoformat(),
+        "comentario":comentario, "estado":estado}).execute()
 
-    if foto_path and os.path.exists(foto_path):
-        try:
-            os.remove(foto_path)
-        except OSError:
-            pass
+def cargar_reservas(instrumento_id=None):
+    q = supabase.table("reservas").select(
+        "id,instrumento_id,usuario,fecha_inicio,fecha_fin,estado,comentario,instrumentos(instrumento)"
+    ).order("fecha_inicio", desc=True)
+    if instrumento_id is not None: q = q.eq("instrumento_id", instrumento_id)
+    rows = []
+    for x in q.execute().data or []:
+        inst = x.pop("instrumentos", None)
+        x["instrumento"] = inst.get("instrumento") if isinstance(inst, dict) else ""
+        rows.append(x)
+    cols = ["id","instrumento_id","instrumento","usuario","fecha_inicio","fecha_fin","estado","comentario"]
+    return pd.DataFrame(rows, columns=cols)
 
+def obtener_reserva_por_id(reserva_id):
+    r = supabase.table("reservas").select("*").eq("id", reserva_id).limit(1).execute()
+    return r.data[0] if r.data else None
 
-# ---------- Reservas ----------
-def insertar_reserva(
-    instrumento_id: int,
-    usuario: str,
-    fecha_inicio: datetime,
-    fecha_fin: datetime,
-    comentario: str,
-    estado: str = "Confirmada",
-):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO reservas
-        (instrumento_id, usuario, fecha_inicio, fecha_fin,
-         comentario, estado, fecha_registro)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            instrumento_id,
-            usuario,
-            fecha_inicio.strftime("%Y-%m-%d %H:%M:%S"),
-            fecha_fin.strftime("%Y-%m-%d %H:%M:%S"),
-            comentario,
-            estado,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ),
-    )
-    conn.commit()
-    conn.close()
+def actualizar_reserva(reserva_id, instrumento_id, usuario, fecha_inicio, fecha_fin,
+                       comentario, estado):
+    supabase.table("reservas").update({
+        "instrumento_id":instrumento_id, "usuario":usuario,
+        "fecha_inicio":fecha_inicio.isoformat(), "fecha_fin":fecha_fin.isoformat(),
+        "comentario":comentario, "estado":estado}).eq("id", reserva_id).execute()
 
+def borrar_reserva(reserva_id):
+    supabase.table("reservas").delete().eq("id", reserva_id).execute()
 
-def cargar_reservas(instrumento_id: Optional[int] = None) -> pd.DataFrame:
-    conn = sqlite3.connect(DB_PATH)
-    if instrumento_id is None:
-        query = """
-        SELECT r.id, r.instrumento_id, i.instrumento,
-               r.usuario, r.fecha_inicio, r.fecha_fin,
-               r.estado, r.comentario
-        FROM reservas r
-        JOIN instrumentos i ON r.instrumento_id = i.id
-        ORDER BY r.fecha_inicio DESC
-        """
-        params: list[Any] = []
-    else:
-        query = """
-        SELECT r.id, r.instrumento_id, i.instrumento,
-               r.usuario, r.fecha_inicio, r.fecha_fin,
-               r.estado, r.comentario
-        FROM reservas r
-        JOIN instrumentos i ON r.instrumento_id = i.id
-        WHERE r.instrumento_id = ?
-        ORDER BY r.fecha_inicio DESC
-        """
-        params = [instrumento_id]
-
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
-
-
-def obtener_reserva_por_id(reserva_id: int) -> Optional[Dict[str, Any]]:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM reservas WHERE id = ?", (reserva_id,))
-    row = cur.fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def actualizar_reserva(
-    reserva_id: int,
-    instrumento_id: int,
-    usuario: str,
-    fecha_inicio: datetime,
-    fecha_fin: datetime,
-    comentario: str,
-    estado: str,
-):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        UPDATE reservas
-        SET instrumento_id = ?,
-            usuario = ?,
-            fecha_inicio = ?,
-            fecha_fin = ?,
-            comentario = ?,
-            estado = ?
-        WHERE id = ?
-        """,
-        (
-            instrumento_id,
-            usuario,
-            fecha_inicio.strftime("%Y-%m-%d %H:%M:%S"),
-            fecha_fin.strftime("%Y-%m-%d %H:%M:%S"),
-            comentario,
-            estado,
-            reserva_id,
-        ),
-    )
-    conn.commit()
-    conn.close()
-
-
-def borrar_reserva(reserva_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM reservas WHERE id = ?", (reserva_id,))
-    conn.commit()
-    conn.close()
-
-
-# ==============================
-# Inicializar DB
-# ==============================
-init_db()
 
 # ==============================
 # UI: pestañas
@@ -463,7 +200,7 @@ with tab1:
             if not investigador_grupo or not instrumento:
                 st.error("Por favor complete al menos 'Investigador / Grupo' e 'Instrumento'.")
             else:
-                foto_path = guardar_imagen(foto)
+                foto_url = guardar_imagen(foto)
                 insertar_instrumento(
                     grupo_unidad=grupo_unidad,
                     responsable=responsable,
@@ -474,7 +211,7 @@ with tab1:
                     estado=estado,
                     ubicacion=ubicacion,
                     descripcion=descripcion,
-                    foto_path=foto_path,
+                    foto_url=foto_url,
                 )
                 st.success("Instrumento guardado correctamente.")
                 do_rerun()
@@ -499,7 +236,7 @@ with tab2:
         st.info("Todavía no hay instrumentos cargados que coincidan con el filtro.")
     else:
         st.markdown("#### Tabla de instrumentos")
-        df_tabla = df_inst.drop(columns=["foto_path"], errors="ignore")
+        df_tabla = df_inst.drop(columns=["foto_url"], errors="ignore")
         st.dataframe(df_tabla, use_container_width=True)
 
         csv = df_tabla.to_csv(index=False).encode("utf-8")
@@ -532,9 +269,9 @@ with tab2:
             st.markdown(f"**Fecha de registro:** {inst_row['fecha_registro']}")
 
         with col_b:
-            foto_path = inst_row.get("foto_path", None)
-            if foto_path and os.path.exists(foto_path):
-                st.image(foto_path, caption="Foto del instrumento")
+            foto_url = inst_row.get("foto_url", None)
+            if foto_url:
+                st.image(foto_url, caption="Foto del instrumento")
             else:
                 st.caption("Sin foto disponible para este instrumento.")
 
@@ -577,14 +314,10 @@ with tab2:
                         if not e_investigador_grupo or not e_instrumento:
                             st.error("Complete al menos 'Investigador / Grupo' e 'Instrumento'.")
                         else:
-                            foto_path_final = inst_actual.get("foto_path")
+                            foto_url_final = inst_actual.get("foto_url")
                             if nueva_foto is not None:
-                                if foto_path_final and os.path.exists(foto_path_final):
-                                    try:
-                                        os.remove(foto_path_final)
-                                    except OSError:
-                                        pass
-                                foto_path_final = guardar_imagen(nueva_foto)
+                                borrar_imagen_por_url(foto_url_final)
+                                foto_url_final = guardar_imagen(nueva_foto)
 
                             actualizar_instrumento(
                                 instrumento_id=int(id_sel),
@@ -597,7 +330,7 @@ with tab2:
                                 estado=e_estado,
                                 ubicacion=e_ubicacion,
                                 descripcion=e_descripcion,
-                                foto_path=foto_path_final,
+                                foto_url=foto_url_final,
                             )
                             st.success("Instrumento actualizado.")
                             do_rerun()
@@ -732,8 +465,8 @@ with tab3:
 
                         r_usuario = st.text_input("Usuario solicitante *", value=res_actual.get("usuario") or "")
 
-                        dt_ini = datetime.strptime(res_actual["fecha_inicio"], "%Y-%m-%d %H:%M:%S")
-                        dt_fin = datetime.strptime(res_actual["fecha_fin"], "%Y-%m-%d %H:%M:%S")
+                        dt_ini = parse_datetime(res_actual["fecha_inicio"])
+                        dt_fin = parse_datetime(res_actual["fecha_fin"])
 
                         cfi, cff = st.columns(2)
                         with cfi:
@@ -783,4 +516,3 @@ with tab3:
                             borrar_reserva(int(reserva_id_sel))
                             st.success("Reserva eliminada.")
                             do_rerun()
-
