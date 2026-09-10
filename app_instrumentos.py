@@ -43,7 +43,7 @@ col_left, col_center, col_right = st.columns([3.0, 6, 2.2])
 with col_left:
     if LOGO_LEFT.exists(): st.image(str(LOGO_LEFT), width="stretch")
 with col_center:
-    st.title("Inventario de Instrumentos - Cultivos Industriales - FAUBA")
+    st.title("Inventario de Instrumentos - Cultivos Industriales - Facultad de Agronomía - UBA")
     st.markdown("""<p style='font-size:22px;margin-top:-8px;text-align:center;'>
     Sistema para registrar y consultar instrumentos, con información básica,
     responsable y reservas de uso.</p>""", unsafe_allow_html=True)
