@@ -41,14 +41,14 @@ LOGO_LEFT = BASE_DIR / "logo_fauba.jpg"
 LOGO_RIGHT = BASE_DIR / "Logo_CI.jpg"
 col_left, col_center, col_right = st.columns([2.2, 6, 2.2])
 with col_left:
-    if LOGO_LEFT.exists(): st.image(str(LOGO_LEFT), use_container_width=True)
+    if LOGO_LEFT.exists(): st.image(str(LOGO_LEFT), width="stretch")
 with col_center:
     st.title("Inventario de Instrumentos - Cultivos Industriales - FAUBA")
     st.markdown("""<p style='font-size:22px;margin-top:-8px;text-align:center;'>
     Sistema para registrar y consultar instrumentos, con información básica,
     responsable y reservas de uso.</p>""", unsafe_allow_html=True)
 with col_right:
-    if LOGO_RIGHT.exists(): st.image(str(LOGO_RIGHT), use_container_width=True)
+    if LOGO_RIGHT.exists(): st.image(str(LOGO_RIGHT), width="stretch")
 
 def do_rerun():
     st.rerun() if hasattr(st, "rerun") else st.experimental_rerun()
@@ -60,31 +60,62 @@ def parse_datetime(value):
     return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
 def guardar_imagen(uploaded_file) -> Optional[str]:
-    if uploaded_file is None: return None
-    suffix = Path(uploaded_file.name).suffix.lower()
-    if suffix not in [".png", ".jpg", ".jpeg"]: suffix = ".png"
-    nombre = f"{uuid.uuid4().hex}{suffix}"
-    supabase.storage.from_(SUPABASE_BUCKET).upload(
-        path=nombre, file=uploaded_file.getvalue(),
-        file_options={"content-type": getattr(uploaded_file, "type", None) or "application/octet-stream",
-                      "upsert": "false"})
-    r = supabase.storage.from_(SUPABASE_BUCKET).create_signed_url(nombre, 315360000)
-    return r.get("signedURL") or r.get("signedUrl")
-
-def _storage_path_from_url(url):
-    if not url: return None
-    try:
-        p = unquote(urlparse(url).path)
-        marker = f"/{SUPABASE_BUCKET}/"
-        return p.split(marker, 1)[1] if marker in p else None
-    except Exception:
+    """
+    Sube la foto al bucket privado de Supabase y devuelve solo la ruta/nombre
+    del archivo. Esa ruta se guarda en la columna foto_url.
+    """
+    if uploaded_file is None:
         return None
 
-def borrar_imagen_por_url(url):
-    p = _storage_path_from_url(url)
-    if p:
-        try: supabase.storage.from_(SUPABASE_BUCKET).remove([p])
-        except Exception: pass
+    suffix = Path(uploaded_file.name).suffix.lower()
+    if suffix not in [".png", ".jpg", ".jpeg"]:
+        suffix = ".png"
+
+    nombre = f"{uuid.uuid4().hex}{suffix}"
+
+    supabase.storage.from_(SUPABASE_BUCKET).upload(
+        path=nombre,
+        file=uploaded_file.getvalue(),
+        file_options={
+            "content-type": getattr(uploaded_file, "type", None)
+            or "application/octet-stream",
+            "upsert": "false",
+        },
+    )
+
+    return nombre
+
+
+def obtener_url_foto(foto_path: Optional[str]) -> Optional[str]:
+    """
+    Genera una URL firmada temporal para visualizar una foto del bucket privado.
+    """
+    if not foto_path:
+        return None
+
+    response = supabase.storage.from_(SUPABASE_BUCKET).create_signed_url(
+        foto_path,
+        3600,
+    )
+
+    if isinstance(response, dict):
+        return response.get("signedURL") or response.get("signedUrl")
+
+    return str(response)
+
+
+def borrar_imagen_por_url(foto_path: Optional[str]):
+    """
+    Borra del bucket la imagen cuya ruta está guardada en foto_url.
+    """
+    if not foto_path:
+        return
+
+    try:
+        supabase.storage.from_(SUPABASE_BUCKET).remove([foto_path])
+    except Exception:
+        pass
+
 
 def insertar_instrumento(grupo_unidad, responsable, investigador_grupo, instrumento,
                          numero_inventario, reserva_uso, estado, ubicacion, descripcion, foto_url):
@@ -237,7 +268,7 @@ with tab2:
     else:
         st.markdown("#### Tabla de instrumentos")
         df_tabla = df_inst.drop(columns=["foto_url"], errors="ignore")
-        st.dataframe(df_tabla, use_container_width=True)
+        st.dataframe(df_tabla, width="stretch")
 
         csv = df_tabla.to_csv(index=False).encode("utf-8")
         st.download_button(
@@ -269,7 +300,8 @@ with tab2:
             st.markdown(f"**Fecha de registro:** {inst_row['fecha_registro']}")
 
         with col_b:
-            foto_url = inst_row.get("foto_url", None)
+            foto_path = inst_row.get("foto_url", None)
+            foto_url = obtener_url_foto(foto_path)
             if foto_url:
                 st.image(foto_url, caption="Foto del instrumento")
             else:
@@ -427,7 +459,7 @@ with tab3:
         if df_res.empty:
             st.info("No hay reservas registradas.")
         else:
-            st.dataframe(df_res, use_container_width=True)
+            st.dataframe(df_res, width="stretch")
 
             csv_res = df_res.to_csv(index=False).encode("utf-8")
             st.download_button(
